@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="theme-color" content="#0b0b14" />
+  <title>Dungeon Crawler</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="hud">
+      <div class="hud-item">
+        <span class="hud-label">Level</span>
+        <span id="hud-level" class="hud-value">1<span class="hud-sub">/10</span></span>
+      </div>
+      <div class="hud-item">
+        <span class="hud-label">Gems</span>
+        <span id="hud-gems" class="hud-value">0<span class="hud-sub">/0</span></span>
+      </div>
+      <div class="hud-item">
+        <span class="hud-label">Score</span>
+        <span id="hud-score" class="hud-value">0</span>
+      </div>
+      <div class="hud-item hud-timer">
+        <span class="hud-label">Time</span>
+        <span id="hud-time" class="hud-value">--</span>
+      </div>
+    </header>
+
+    <main class="stage">
+      <div id="board" class="board" role="grid" aria-label="Dungeon grid"></div>
+
+      <!-- Overlay screens -->
+      <div id="overlay" class="overlay overlay-start" aria-live="polite">
+        <div class="overlay-card">
+          <h1 class="title">DUNGEON<br/>CRAWLER</h1>
+          <p class="subtitle">10 levels. Grab the gems. Find the exit.</p>
+          <ul class="legend">
+            <li><span class="tile-mini">🧙</span> You</li>
+            <li><span class="tile-mini">💎</span> Gem (+10)</li>
+            <li><span class="tile-mini">🚪</span> Exit</li>
+            <li><span class="tile-mini wall-mini"></span> Wall</li>
+          </ul>
+          <button id="btn-primary" class="btn-primary">START</button>
+          <p class="hint">Use the D-pad or arrow keys / WASD</p>
+        </div>
+      </div>
+    </main>
+
+    <footer class="controls">
+      <div class="dpad" role="group" aria-label="Movement controls">
+        <button class="dpad-btn dpad-up" data-dir="up" aria-label="Move up">▲</button>
+        <button class="dpad-btn dpad-left" data-dir="left" aria-label="Move left">◀</button>
+        <button class="dpad-btn dpad-center" aria-hidden="true" tabindex="-1"></button>
+        <button class="dpad-btn dpad-right" data-dir="right" aria-label="Move right">▶</button>
+        <button class="dpad-btn dpad-down" data-dir="down" aria-label="Move down">▼</button>
+      </div>
+    </footer>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>
