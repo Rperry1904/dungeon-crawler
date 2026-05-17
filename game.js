@@ -6,8 +6,6 @@
   'use strict';
 
   // ---------- Level configuration ----------
-  // Each level: random grid in [minGrid, maxGrid], `time` seconds, `gems` valuables,
-  // and `wallDensity` controls how cluttered the dungeon is.
   const LEVELS = [
     { minGrid: 8,  maxGrid: 9,  time: 45, gems: 4,  wallDensity: 0.22 },
     { minGrid: 9,  maxGrid: 10, time: 50, gems: 5,  wallDensity: 0.24 },
@@ -21,11 +19,7 @@
     { minGrid: 17, maxGrid: 19, time: 90, gems: 15, wallDensity: 0.40 },
   ];
 
-  const ICONS = {
-    player: '🧙',
-    gem: '💎',
-    exit: '🚪',
-  };
+  const ICONS = { player: '\u{1F9D9}', gem: '\u{1F48E}', exit: '\u{1F6AA}' };
 
   // ---------- DOM ----------
   const $ = (id) => document.getElementById(id);
@@ -38,7 +32,7 @@
 
   // ---------- Game state ----------
   const state = {
-    levelIndex: 0,   // 0..9
+    levelIndex: 0,
     score: 0,
     gemsCollected: 0,
     gemsTotal: 0,
@@ -46,11 +40,20 @@
     timerId: null,
     lastTick: 0,
     running: false,
-    grid: null,      // 2D array: 0 floor, 1 wall, 2 gem, 3 exit
+    grid: null,
     size: 0,
     player: { r: 0, c: 0 },
     cellEls: [],
+    sightRadius: 2,
+    visible: new Set(),
+    explored: new Set(),
   };
+
+  function sightRadiusForLevel(levelIndex) {
+    if (levelIndex <= 2) return 3;
+    if (levelIndex <= 6) return 2;
+    return 1;
+  }
 
   // ---------- Utility ----------
   const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
@@ -64,7 +67,6 @@
     return out;
   }
 
-  // BFS reachability check from (sr,sc) — returns set of "r,c" keys reachable.
   function reachable(grid, sr, sc) {
     const size = grid.length;
     const seen = new Set();
@@ -74,7 +76,7 @@
     while (queue.length) {
       const [r, c] = queue.shift();
       for (const [nr, nc] of neighbors(r, c, size)) {
-        if (grid[nr][nc] === 1) continue; // wall
+        if (grid[nr][nc] === 1) continue;
         const k = key(nr, nc);
         if (seen.has(k)) continue;
         seen.add(k);
@@ -85,33 +87,27 @@
   }
 
   // ---------- Dungeon generation ----------
-  // Strategy: random walls (with border buffer) -> ensure player start, exit, and
-  // every gem are all reachable. Regenerate if not. Cap attempts to be safe.
   function generateDungeon(level) {
     const size = rand(level.minGrid, level.maxGrid);
     const totalCells = size * size;
     const targetGems = Math.min(level.gems, Math.floor(totalCells * 0.15));
 
     for (let attempt = 0; attempt < 80; attempt++) {
-      // 1. Initialize all floors
       const grid = Array.from({ length: size }, () => Array(size).fill(0));
-
-      // 2. Sprinkle walls (skip the start corner immediately around player)
       const startR = 0, startC = 0;
+
       for (let r = 0; r < size; r++) {
         for (let c = 0; c < size; c++) {
           if (r === startR && c === startC) continue;
-          if (Math.abs(r - startR) + Math.abs(c - startC) <= 1) continue; // keep start clear
+          if (Math.abs(r - startR) + Math.abs(c - startC) <= 1) continue;
           if (Math.random() < level.wallDensity) grid[r][c] = 1;
         }
       }
 
-      // 3. Pick an exit far from the start (prefer the opposite corner area)
       const reachSet = reachable(grid, startR, startC);
       const reachable_cells = [...reachSet].map((k) => k.split(',').map(Number));
       if (reachable_cells.length < targetGems + 2) continue;
 
-      // Sort reachable cells by distance from start (Manhattan), put exit far away
       reachable_cells.sort((a, b) => {
         const da = Math.abs(a[0] - startR) + Math.abs(a[1] - startC);
         const db = Math.abs(b[0] - startR) + Math.abs(b[1] - startC);
@@ -120,13 +116,11 @@
       const [exitR, exitC] = reachable_cells[0];
       grid[exitR][exitC] = 3;
 
-      // 4. Place gems on reachable cells (random, but not on start or exit)
       const candidatePool = reachable_cells
-        .slice(1) // drop the exit cell
+        .slice(1)
         .filter(([r, c]) => !(r === startR && c === startC));
       if (candidatePool.length < targetGems) continue;
 
-      // Shuffle and pick gems
       for (let i = candidatePool.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [candidatePool[i], candidatePool[j]] = [candidatePool[j], candidatePool[i]];
@@ -139,7 +133,6 @@
       return { size, grid, start: { r: startR, c: startC }, gemCount: targetGems };
     }
 
-    // Fallback: open grid with diagonal gems if random gen kept failing.
     const grid = Array.from({ length: size }, () => Array(size).fill(0));
     grid[size - 1][size - 1] = 3;
     let placed = 0;
@@ -150,6 +143,23 @@
     return { size, grid, start: { r: 0, c: 0 }, gemCount: placed };
   }
 
+  // ---------- Fog of war ----------
+  function computeVisibility() {
+    state.visible = new Set();
+    const { r: pr, c: pc } = state.player;
+    const R = state.sightRadius;
+    for (let dr = -R; dr <= R; dr++) {
+      for (let dc = -R; dc <= R; dc++) {
+        const r = pr + dr;
+        const c = pc + dc;
+        if (r < 0 || c < 0 || r >= state.size || c >= state.size) continue;
+        const key = r + ',' + c;
+        state.visible.add(key);
+        state.explored.add(key);
+      }
+    }
+  }
+
   // ---------- Rendering ----------
   function renderBoard() {
     const size = state.size;
@@ -157,7 +167,6 @@
     board.style.gridTemplateRows    = `repeat(${size}, 1fr)`;
     board.innerHTML = '';
     state.cellEls = [];
-
     for (let r = 0; r < size; r++) {
       const row = [];
       for (let c = 0; c < size; c++) {
@@ -175,36 +184,39 @@
 
   function paintAllCells() {
     for (let r = 0; r < state.size; r++) {
-      for (let c = 0; c < state.size; c++) {
-        paintCell(r, c);
-      }
+      for (let c = 0; c < state.size; c++) paintCell(r, c);
     }
   }
 
   function paintCell(r, c) {
     const el = state.cellEls[r][c];
     if (!el) return;
-    const v = state.grid[r][c];
+    const key = r + ',' + c;
+    const isVisible  = state.visible.has(key);
+    const isExplored = state.explored.has(key);
+
     el.className = 'cell';
     el.removeAttribute('data-icon');
+
+    if (!isVisible && !isExplored) {
+      el.classList.add('fog');
+      return;
+    }
 
     if (state.player.r === r && state.player.c === c) {
       el.classList.add('player');
       el.setAttribute('data-icon', ICONS.player);
       return;
     }
+
+    const v = state.grid[r][c];
     switch (v) {
       case 0: el.classList.add('floor'); break;
       case 1: el.classList.add('wall');  break;
-      case 2:
-        el.classList.add('gem');
-        el.setAttribute('data-icon', ICONS.gem);
-        break;
-      case 3:
-        el.classList.add('exit');
-        el.setAttribute('data-icon', ICONS.exit);
-        break;
+      case 2: el.classList.add('gem');  el.setAttribute('data-icon', ICONS.gem);  break;
+      case 3: el.classList.add('exit'); el.setAttribute('data-icon', ICONS.exit); break;
     }
+    if (!isVisible) el.classList.add('seen');
   }
 
   function flashCell(r, c) {
@@ -219,7 +231,7 @@
     hudLevel.innerHTML = `${state.levelIndex + 1}<span class="hud-sub">/10</span>`;
     hudGems.innerHTML  = `${state.gemsCollected}<span class="hud-sub">/${state.gemsTotal}</span>`;
     hudScore.textContent = state.score;
-    hudTime.textContent = state.timeLeft.toFixed(0);
+    hudTime.textContent  = state.timeLeft.toFixed(0);
     if (state.timeLeft <= 10) hudTime.classList.add('danger');
     else hudTime.classList.remove('danger');
   }
@@ -237,6 +249,11 @@
     state.gemsTotal = dungeon.gemCount;
     state.timeLeft = level.time;
     state.running = true;
+
+    state.sightRadius = sightRadiusForLevel(idx);
+    state.explored = new Set();
+    state.visible = new Set();
+    computeVisibility();
 
     renderBoard();
     updateHud();
@@ -261,33 +278,24 @@
     state.lastTick = now;
     state.timeLeft = Math.max(0, state.timeLeft - dt);
     updateHud();
-    if (state.timeLeft <= 0) {
-      gameOver(false);
-      return;
-    }
+    if (state.timeLeft <= 0) { gameOver(); return; }
     state.timerId = requestAnimationFrame(tick);
   }
 
   function completeLevel() {
     state.running = false;
     stopTimer();
-    const level = LEVELS[state.levelIndex];
-    const timeBonus = Math.round(state.timeLeft * 2);
+    const timeBonus  = Math.round(state.timeLeft * 2);
     const levelBonus = 50;
     state.score += timeBonus + levelBonus;
-
-    const isFinal = state.levelIndex >= LEVELS.length - 1;
-    if (isFinal) {
-      showVictory(timeBonus, levelBonus);
-    } else {
-      showLevelComplete(timeBonus, levelBonus);
-    }
+    if (state.levelIndex >= LEVELS.length - 1) showVictory(timeBonus, levelBonus);
+    else showLevelComplete(timeBonus, levelBonus);
   }
 
-  function gameOver(playerEscaped) {
+  function gameOver() {
     state.running = false;
     stopTimer();
-    showGameOver(playerEscaped);
+    showGameOver();
   }
 
   function resetGame() {
@@ -296,9 +304,7 @@
   }
 
   // ---------- Overlays ----------
-  function hideOverlay() {
-    overlay.classList.add('hidden');
-  }
+  function hideOverlay() { overlay.classList.add('hidden'); }
 
   function showOverlay(html) {
     overlay.classList.remove('hidden');
@@ -318,9 +324,7 @@
       </div>
       <button class="btn-primary" id="btn-next">NEXT LEVEL</button>
     `);
-    overlay.querySelector('#btn-next').addEventListener('click', () => {
-      startLevel(state.levelIndex + 1);
-    });
+    overlay.querySelector('#btn-next').addEventListener('click', () => startLevel(state.levelIndex + 1));
   }
 
   function showVictory(timeBonus, levelBonus) {
@@ -335,10 +339,7 @@
       </div>
       <button class="btn-primary" id="btn-restart">PLAY AGAIN</button>
     `);
-    overlay.querySelector('#btn-restart').addEventListener('click', () => {
-      resetGame();
-      startLevel(0);
-    });
+    overlay.querySelector('#btn-restart').addEventListener('click', () => { resetGame(); startLevel(0); });
   }
 
   function showGameOver() {
@@ -352,10 +353,7 @@
       </div>
       <button class="btn-primary" id="btn-restart">TRY AGAIN</button>
     `);
-    overlay.querySelector('#btn-restart').addEventListener('click', () => {
-      resetGame();
-      startLevel(0);
-    });
+    overlay.querySelector('#btn-restart').addEventListener('click', () => { resetGame(); startLevel(0); });
   }
 
   // ---------- Movement ----------
@@ -372,13 +370,11 @@
     const nr = state.player.r + dr;
     const nc = state.player.c + dc;
     if (nr < 0 || nc < 0 || nr >= state.size || nc >= state.size) return;
-    if (state.grid[nr][nc] === 1) return; // wall
+    if (state.grid[nr][nc] === 1) return;
 
-    const prev = { r: state.player.r, c: state.player.c };
     state.player.r = nr;
     state.player.c = nc;
 
-    // Tile effects
     const tile = state.grid[nr][nc];
     if (tile === 2) {
       state.grid[nr][nc] = 0;
@@ -387,18 +383,15 @@
       flashCell(nr, nc);
     }
 
-    paintCell(prev.r, prev.c);
-    paintCell(nr, nc);
+    computeVisibility();
+    paintAllCells();
     updateHud();
 
-    if (tile === 3) {
-      completeLevel();
-    }
+    if (tile === 3) completeLevel();
   }
 
   // ---------- Input ----------
   function bindInput() {
-    // D-pad: pointer events cover both mouse and touch.
     document.querySelectorAll('.dpad-btn[data-dir]').forEach((btn) => {
       const dir = btn.dataset.dir;
       let repeatId = null;
@@ -406,7 +399,6 @@
         e.preventDefault();
         btn.classList.add('pressed');
         move(dir);
-        // Hold-to-repeat after a brief delay
         clearTimeout(repeatId);
         repeatId = setTimeout(function repeat() {
           if (!btn.classList.contains('pressed')) return;
@@ -414,52 +406,37 @@
           repeatId = setTimeout(repeat, 110);
         }, 220);
       };
-      const end = () => {
-        btn.classList.remove('pressed');
-        clearTimeout(repeatId);
-      };
+      const end = () => { btn.classList.remove('pressed'); clearTimeout(repeatId); };
       btn.addEventListener('pointerdown', start);
       btn.addEventListener('pointerup', end);
       btn.addEventListener('pointerleave', end);
       btn.addEventListener('pointercancel', end);
     });
 
-    // Keyboard
     document.addEventListener('keydown', (e) => {
       const key = e.key.toLowerCase();
       let dir = null;
-      if (key === 'arrowup' || key === 'w') dir = 'up';
-      else if (key === 'arrowdown' || key === 's') dir = 'down';
-      else if (key === 'arrowleft' || key === 'a') dir = 'left';
+      if (key === 'arrowup'    || key === 'w') dir = 'up';
+      else if (key === 'arrowdown'  || key === 's') dir = 'down';
+      else if (key === 'arrowleft'  || key === 'a') dir = 'left';
       else if (key === 'arrowright' || key === 'd') dir = 'right';
       if (dir) { e.preventDefault(); move(dir); }
     });
 
-    // Start button (initial overlay)
     document.addEventListener('click', (e) => {
-      if (e.target && e.target.id === 'btn-primary') {
-        resetGame();
-        startLevel(0);
-      }
+      if (e.target && e.target.id === 'btn-primary') { resetGame(); startLevel(0); }
     });
 
-    // Prevent scroll bounce on iOS when dragging on the game
     document.addEventListener('touchmove', (e) => {
-      if (e.target.closest('.dpad') || e.target.closest('.board')) {
-        e.preventDefault();
-      }
+      if (e.target.closest('.dpad') || e.target.closest('.board')) e.preventDefault();
     }, { passive: false });
   }
 
   // ---------- Boot ----------
-  function init() {
-    bindInput();
-    // The initial overlay (defined in index.html) handles the START button.
-  }
+  function init() { bindInput(); }
 
-  // Expose a small testing hook so headless tests can validate dungeon gen.
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { generateDungeon, reachable, LEVELS };
+    module.exports = { generateDungeon, reachable, LEVELS, sightRadiusForLevel };
   } else {
     document.addEventListener('DOMContentLoaded', init);
   }

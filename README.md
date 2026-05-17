@@ -27,6 +27,7 @@ A timed, grid-based dungeon crawler built with vanilla HTML, CSS, and JavaScript
 
 - **10 procedurally generated levels** with randomized grid sizes (8×8 up to 19×19) and increasing wall density.
 - **Solvability guaranteed** — every dungeon is validated with a breadth-first reachability check before being served, so the exit and every gem are always reachable from the player's starting tile.
+- **Fog of war** with a sight radius that shrinks as you descend — your torch gets dimmer on later levels, so dead ends and hidden walls force real exploration and backtracking. Explored tiles stay dimly visible so you can remember the layout.
 - **On-screen D-pad** with press-and-hold repeat, plus full keyboard support (Arrow keys / WASD).
 - **Mobile-first responsive layout** with touch-friendly controls, safe-area insets for notched devices, and adaptive sizing for short viewports.
 - **Score system** that rewards both speed and thoroughness — collect gems for points, but exit early for a time bonus.
@@ -64,18 +65,20 @@ Hold a D-pad direction to repeat-move.
 
 ## Difficulty Curve
 
-| Level | Grid size (random) | Time limit | Target gems | Wall density |
-|------:|--------------------|-----------:|------------:|-------------:|
-| 1     | 8–9                | 45s        | 4           | 0.22         |
-| 2     | 9–10               | 50s        | 5           | 0.24         |
-| 3     | 10–11              | 55s        | 6           | 0.26         |
-| 4     | 11–12              | 60s        | 7           | 0.28         |
-| 5     | 12–13              | 65s        | 8           | 0.30         |
-| 6     | 13–14              | 70s        | 9           | 0.32         |
-| 7     | 14–15              | 75s        | 10          | 0.34         |
-| 8     | 15–16              | 80s        | 11          | 0.36         |
-| 9     | 16–17              | 85s        | 12          | 0.38         |
-| 10    | 17–19              | 90s        | 15          | 0.40         |
+| Level | Grid size (random) | Time limit | Target gems | Wall density | Sight radius |
+|------:|--------------------|-----------:|------------:|-------------:|-------------:|
+| 1     | 8–9                | 45s        | 4           | 0.22         | 3 (7×7)      |
+| 2     | 9–10               | 50s        | 5           | 0.24         | 3 (7×7)      |
+| 3     | 10–11              | 55s        | 6           | 0.26         | 3 (7×7)      |
+| 4     | 11–12              | 60s        | 7           | 0.28         | 2 (5×5)      |
+| 5     | 12–13              | 65s        | 8           | 0.30         | 2 (5×5)      |
+| 6     | 13–14              | 70s        | 9           | 0.32         | 2 (5×5)      |
+| 7     | 14–15              | 75s        | 10          | 0.34         | 2 (5×5)      |
+| 8     | 15–16              | 80s        | 11          | 0.36         | 1 (3×3)      |
+| 9     | 16–17              | 85s        | 12          | 0.38         | 1 (3×3)      |
+| 10    | 17–19              | 90s        | 15          | 0.40         | 1 (3×3)      |
+
+Sight radius is the Chebyshev distance you can see in any direction from your current tile. Beyond that, tiles you've already visited remain dimly visible (so you can remember the layout); tiles you've never seen are pitch black.
 
 ## Tech Stack
 
