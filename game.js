@@ -53,6 +53,7 @@
     visible: new Set(),
     explored: new Set(),
     monsters: [],          // [{ r, c }] — start showing at level 4
+    monsterTickCounter: 0, // counts player moves; ghosts step when it hits the interval
   };
 
   function sightRadiusForLevel(levelIndex) {
@@ -61,12 +62,18 @@
     return 1;
   }
 
-  // Monsters appear at level 4 and scale up. Movement is 1:1 with the player.
+  // Monsters appear at level 4 and scale up.
   function monsterCountForLevel(levelIndex) {
     if (levelIndex <= 2) return 0;   // Levels 1-3: peaceful
     if (levelIndex <= 5) return 1;   // Levels 4-6: one ghost
     if (levelIndex <= 7) return 2;   // Levels 7-8: two ghosts
     return 3;                        // Levels 9-10: three ghosts
+  }
+
+  // How many player moves between each ghost step. Higher = slower ghosts,
+  // giving you breathing room to pause and collect gems.
+  function monsterStepIntervalForLevel(levelIndex) {
+    return 2;  // tune per level later if endgame needs more bite
   }
 
   // ---------- Utility ----------
@@ -399,6 +406,7 @@
       state.player.c,
       monsterCountForLevel(idx)
     );
+    state.monsterTickCounter = 0;
 
     renderBoard();
     updateHud();
@@ -540,16 +548,21 @@
       return;
     }
 
-    // Phase 2: monsters take their turn.
-    moveMonsters();
+    // Phase 2: monsters take their turn -- but only every Nth player move,
+    // so you have a fighting chance to dart in for a gem and back out.
+    state.monsterTickCounter++;
+    if (state.monsterTickCounter >= monsterStepIntervalForLevel(state.levelIndex)) {
+      state.monsterTickCounter = 0;
+      moveMonsters();
 
-    // Phase 3: did a monster step onto the player?
-    if (monsterOnPlayer()) {
-      computeVisibility();
-      paintAllCells();
-      updateHud();
-      gameOver('caught');
-      return;
+      // Phase 3: did a monster step onto the player?
+      if (monsterOnPlayer()) {
+        computeVisibility();
+        paintAllCells();
+        updateHud();
+        gameOver('caught');
+        return;
+      }
     }
 
     computeVisibility();
@@ -592,6 +605,7 @@
       if (dir) { e.preventDefault(); move(dir); }
     });
 
+
     document.addEventListener('click', (e) => {
       if (e.target && e.target.id === 'btn-primary') { resetGame(); startLevel(0); }
     });
@@ -611,6 +625,7 @@
       LEVELS,
       sightRadiusForLevel,
       monsterCountForLevel,
+      monsterStepIntervalForLevel,
       bfsDistances,
       spawnMonsters,
     };
