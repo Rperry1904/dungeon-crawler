@@ -128,12 +128,23 @@ button {
 .cell.exit    { background: radial-gradient(circle, #3a8a4a 0%, #1f4a2a 100%); box-shadow: inset 0 0 8px rgba(120, 255, 150, 0.4); }
 .cell.gem     { background: #1e1a36; }
 .cell.player  { background: radial-gradient(circle, #5a4878 0%, #1e1a36 100%); }
+.cell.monster { background: radial-gradient(circle, #6b1a2a 0%, #1e1a36 100%); animation: monster-pulse 0.6s ease-in-out infinite alternate; }
 
 .cell.gem::after,
 .cell.exit::after,
-.cell.player::after {
+.cell.player::after,
+.cell.monster::after {
   content: attr(data-icon);
   filter: drop-shadow(0 0 4px rgba(0,0,0,0.6));
+}
+
+.cell.monster::after {
+  filter: drop-shadow(0 0 6px rgba(255, 80, 100, 0.85));
+}
+
+@keyframes monster-pulse {
+  from { box-shadow: inset 0 0 6px rgba(255, 80, 100, 0.45); }
+  to   { box-shadow: inset 0 0 14px rgba(255, 80, 100, 0.85); }
 }
 
 /* ---------- Fog of war ---------- */

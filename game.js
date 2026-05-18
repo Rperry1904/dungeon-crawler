@@ -19,7 +19,12 @@
     { minGrid: 17, maxGrid: 19, time: 90, gems: 15, wallDensity: 0.40 },
   ];
 
-  const ICONS = { player: '\u{1F9D9}', gem: '\u{1F48E}', exit: '\u{1F6AA}' };
+  const ICONS = {
+    player:  '\u{1F9D9}',  // 🧙 mage
+    gem:     '\u{1F48E}',  // 💎
+    exit:    '\u{1F6AA}',  // 🚪
+    monster: '\u{1F47B}',  // 👻 ghost
+  };
 
   // ---------- DOM ----------
   const $ = (id) => document.getElementById(id);
@@ -47,12 +52,21 @@
     sightRadius: 2,
     visible: new Set(),
     explored: new Set(),
+    monsters: [],          // [{ r, c }] — start showing at level 4
   };
 
   function sightRadiusForLevel(levelIndex) {
     if (levelIndex <= 2) return 3;
     if (levelIndex <= 6) return 2;
     return 1;
+  }
+
+  // Monsters appear at level 4 and scale up. Movement is 1:1 with the player.
+  function monsterCountForLevel(levelIndex) {
+    if (levelIndex <= 2) return 0;   // Levels 1-3: peaceful
+    if (levelIndex <= 5) return 1;   // Levels 4-6: one ghost
+    if (levelIndex <= 7) return 2;   // Levels 7-8: two ghosts
+    return 3;                        // Levels 9-10: three ghosts
   }
 
   // ---------- Utility ----------
@@ -67,7 +81,14 @@
     return out;
   }
 
-  function reachable(grid, sr, sc) {
+  // BFS from (sr,sc).
+  //   blockExit=false (default): walls block; everything else is passable
+  //     (used during initial dungeon layout, when there's no exit yet).
+  //   blockExit=true: the exit tile is a destination you can step onto but
+  //     cannot transit through -- matches in-game movement, since stepping on
+  //     the exit ends the level. Use this when verifying gem reachability so
+  //     we never ship a level with a gem hidden behind the exit door.
+  function reachable(grid, sr, sc, blockExit) {
     const size = grid.length;
     const seen = new Set();
     const key = (r, c) => r + ',' + c;
@@ -75,6 +96,10 @@
     seen.add(key(sr, sc));
     while (queue.length) {
       const [r, c] = queue.shift();
+      // If standing on the exit (and we're not allowed to transit through it),
+      // don't expand neighbors. The exit itself stays in `seen` as a reachable
+      // destination.
+      if (blockExit && grid[r][c] === 3 && !(r === sr && c === sc)) continue;
       for (const [nr, nc] of neighbors(r, c, size)) {
         if (grid[nr][nc] === 1) continue;
         const k = key(nr, nc);
@@ -130,6 +155,23 @@
         grid[r][c] = 2;
       }
 
+      // Defensive: re-verify reachability on the FINAL grid, treating the exit
+      // as terminal (you can step onto it, but stepping on it ends the level,
+      // so you cannot transit through it). This catches the case where a gem
+      // ends up tucked behind the exit door with no other path in.
+      const finalReach = reachable(grid, startR, startC, true);
+      let allReachable = finalReach.has(exitR + ',' + exitC);
+      if (allReachable) {
+        for (let r = 0; r < size && allReachable; r++) {
+          for (let c = 0; c < size && allReachable; c++) {
+            if (grid[r][c] === 2 && !finalReach.has(r + ',' + c)) {
+              allReachable = false;
+            }
+          }
+        }
+      }
+      if (!allReachable) continue;
+
       return { size, grid, start: { r: startR, c: startC }, gemCount: targetGems };
     }
 
@@ -158,6 +200,87 @@
         state.explored.add(key);
       }
     }
+  }
+
+  // ---------- Monsters ----------
+  // BFS from a source cell -> 2D array of distances (Infinity for unreachable).
+  function bfsDistances(grid, sr, sc) {
+    const size = grid.length;
+    const dist = Array.from({ length: size }, () => Array(size).fill(Infinity));
+    dist[sr][sc] = 0;
+    const queue = [[sr, sc]];
+    while (queue.length) {
+      const [r, c] = queue.shift();
+      for (const [nr, nc] of neighbors(r, c, size)) {
+        if (grid[nr][nc] === 1) continue;
+        if (dist[nr][nc] === Infinity) {
+          dist[nr][nc] = dist[r][c] + 1;
+          queue.push([nr, nc]);
+        }
+      }
+    }
+    return dist;
+  }
+
+  // Place `count` monsters on reachable floor cells (not gems/exit), keeping
+  // them at least `minDistance` Manhattan steps from the player so the level
+  // doesn't open with an instant death.
+  function spawnMonsters(grid, size, playerR, playerC, count) {
+    if (count <= 0) return [];
+    const minDistance = Math.max(4, Math.floor(size / 2));
+    const candidates = [];
+    for (let r = 0; r < size; r++) {
+      for (let c = 0; c < size; c++) {
+        if (grid[r][c] !== 0) continue; // floor only -- not walls, gems, or exit
+        const d = Math.abs(r - playerR) + Math.abs(c - playerC);
+        if (d < minDistance) continue;
+        candidates.push({ r, c });
+      }
+    }
+    for (let i = candidates.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+    }
+    return candidates.slice(0, Math.min(count, candidates.length));
+  }
+
+  // Each monster steps onto the neighbor that brings it closest to the player.
+  // Monsters won't pile up on the same tile (except the player's tile, which is
+  // game over). If a monster has no improving move, it stays put.
+  function moveMonsters() {
+    if (state.monsters.length === 0) return;
+    const dist = bfsDistances(state.grid, state.player.r, state.player.c);
+    const occupied = new Set(state.monsters.map((m) => m.r + ',' + m.c));
+
+    for (const m of state.monsters) {
+      const current = dist[m.r][m.c];
+      let bestCell = null;
+      let bestDist = current;
+
+      for (const [nr, nc] of neighbors(m.r, m.c, state.size)) {
+        if (state.grid[nr][nc] === 1) continue;
+        if (dist[nr][nc] === Infinity) continue;
+        const isPlayer = nr === state.player.r && nc === state.player.c;
+        const blockedByOther = occupied.has(nr + ',' + nc) && !isPlayer;
+        if (blockedByOther) continue;
+        if (dist[nr][nc] < bestDist) {
+          bestDist = dist[nr][nc];
+          bestCell = { r: nr, c: nc };
+        }
+      }
+
+      if (bestCell) {
+        occupied.delete(m.r + ',' + m.c);
+        m.r = bestCell.r;
+        m.c = bestCell.c;
+        occupied.add(m.r + ',' + m.c);
+      }
+    }
+  }
+
+  // Returns true if any monster shares the player's tile.
+  function monsterOnPlayer() {
+    return state.monsters.some((m) => m.r === state.player.r && m.c === state.player.c);
   }
 
   // ---------- Rendering ----------
@@ -209,6 +332,18 @@
       return;
     }
 
+    // Monsters are only drawn when currently in sight (not in memory) -- you
+    // can't track a ghost through the fog.
+    if (isVisible) {
+      for (const m of state.monsters) {
+        if (m.r === r && m.c === c) {
+          el.classList.add('monster');
+          el.setAttribute('data-icon', ICONS.monster);
+          return;
+        }
+      }
+    }
+
     const v = state.grid[r][c];
     switch (v) {
       case 0: el.classList.add('floor'); break;
@@ -255,6 +390,16 @@
     state.visible = new Set();
     computeVisibility();
 
+    // Spawn monsters (zero on early levels). They live in their own array,
+    // not in the dungeon grid, so they can stand on floor / gems / exit.
+    state.monsters = spawnMonsters(
+      state.grid,
+      state.size,
+      state.player.r,
+      state.player.c,
+      monsterCountForLevel(idx)
+    );
+
     renderBoard();
     updateHud();
     hideOverlay();
@@ -278,7 +423,7 @@
     state.lastTick = now;
     state.timeLeft = Math.max(0, state.timeLeft - dt);
     updateHud();
-    if (state.timeLeft <= 0) { gameOver(); return; }
+    if (state.timeLeft <= 0) { gameOver('time'); return; }
     state.timerId = requestAnimationFrame(tick);
   }
 
@@ -287,15 +432,14 @@
     stopTimer();
     const timeBonus  = Math.round(state.timeLeft * 2);
     const levelBonus = 50;
-    state.score += timeBonus + levelBonus;
     if (state.levelIndex >= LEVELS.length - 1) showVictory(timeBonus, levelBonus);
     else showLevelComplete(timeBonus, levelBonus);
   }
 
-  function gameOver() {
+  function gameOver(reason) {
     state.running = false;
     stopTimer();
-    showGameOver();
+    showGameOver(reason || 'time');
   }
 
   function resetGame() {
@@ -342,10 +486,14 @@
     overlay.querySelector('#btn-restart').addEventListener('click', () => { resetGame(); startLevel(0); });
   }
 
-  function showGameOver() {
+  function showGameOver(reason) {
+    const title    = reason === 'caught' ? 'CAUGHT!'        : "TIME'S UP";
+    const subtitle = reason === 'caught'
+      ? 'A creature found you in the dark.'
+      : 'The dungeon claims another soul.';
     showOverlay(`
-      <h1 class="title">TIME'S UP</h1>
-      <p class="subtitle">The dungeon claims another soul.</p>
+      <h1 class="title">${title}</h1>
+      <p class="subtitle">${subtitle}</p>
       <div class="summary">
         <div class="stat-row"><span class="label">Reached</span><span class="value">Level ${state.levelIndex + 1}</span></div>
         <div class="stat-row"><span class="label">Gems</span><span class="value">${state.gemsCollected} / ${state.gemsTotal}</span></div>
@@ -381,6 +529,27 @@
       state.gemsCollected++;
       state.score += 10;
       flashCell(nr, nc);
+    }
+
+    // Phase 1: did the player walk INTO a monster?
+    if (monsterOnPlayer()) {
+      computeVisibility();
+      paintAllCells();
+      updateHud();
+      gameOver('caught');
+      return;
+    }
+
+    // Phase 2: monsters take their turn.
+    moveMonsters();
+
+    // Phase 3: did a monster step onto the player?
+    if (monsterOnPlayer()) {
+      computeVisibility();
+      paintAllCells();
+      updateHud();
+      gameOver('caught');
+      return;
     }
 
     computeVisibility();
@@ -436,7 +605,15 @@
   function init() { bindInput(); }
 
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { generateDungeon, reachable, LEVELS, sightRadiusForLevel };
+    module.exports = {
+      generateDungeon,
+      reachable,
+      LEVELS,
+      sightRadiusForLevel,
+      monsterCountForLevel,
+      bfsDistances,
+      spawnMonsters,
+    };
   } else {
     document.addEventListener('DOMContentLoaded', init);
   }
